@@ -1,10 +1,15 @@
 body {
 	background-color: #f2f2f2;
 	overflow: hidden;
+
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	height: 100vh;
 }
 
 h1 {
-	color: #333333;
+	color: #333;
 	font-size: 3rem;
 	text-align: center;
 	margin-top: 2rem;
@@ -24,5 +29,26 @@ p {
 	flex-direction: column;
 	align-items: center;
 	justify-content: center;
-	height: 100vh;
+
+	border: #333 3px solid;
+	border-radius: 2rem;
+	padding: 1.5rem;
+
+	box-shadow: .5rem .5rem 1rem rgba(0, 0, 0, .3);
+	text-shadow: .2rem .2rem .2rem rgba(0, 0, 0, .2);	
+
+	transition-duration: .3s;
+
+	-webkit-user-select: none;
+	-moz-user-select: none;
+	-ms-user-select: none;
+	user-select: none;
+}
+
+.container:hover {
+	transform: scale(1.05);
+}
+
+.container:active {
+	transform: scale(.95);
 }
