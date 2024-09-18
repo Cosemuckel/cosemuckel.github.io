@@ -8,9 +8,14 @@ body {
 	height: 100vh;
 }
 
+a {
+	color: #333;
+	text-decoration: none;
+}
+
 h1 {
 	color: #333;
-	font-size: 3rem;
+	font-size: 2rem;
 	text-align: center;
 	margin-top: 2rem;
 	font-family: monospace, serif;
@@ -22,6 +27,12 @@ p {
 	margin: 2rem auto;
 	max-width: 80%;
 	text-align: justify;
+}
+
+img {
+	max-width: 25rem;
+	height: auto;
+	background-color: none;
 }
 
 .container {
