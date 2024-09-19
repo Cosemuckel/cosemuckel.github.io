@@ -334,6 +334,12 @@ function home() {
 
 function theme() {
     currentTheme = (currentTheme + 1) % themes.length;
+    if (currentTheme === 2) {
+        document.querySelectorAll('.button').forEach(e => e.style.color = '#333');
+    }
+    else {
+        document.querySelectorAll('.button').forEach(e => e.style.color = '#fff');
+    }
     renderedChunks.clear();
     drawMandelbrot();
 }
