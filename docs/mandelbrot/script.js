@@ -21,15 +21,24 @@ function interpolate(t, colors) {
 }
 
 function calculateMandelbrot(data) {
-    const { width, height, topLeft, bottomRight, chunkStartX, chunkStartY, chunkSize, colors } = data;
+    const { width, height, topLeft, bottomRight, chunkStartX, chunkStartY, chunkSize, colors, zx0, zy0, julia } = data;
     const buffer = new Uint8ClampedArray(chunkSize * chunkSize * 4);
 
     for (let y = 0; y < chunkSize; y++) {
         for (let x = 0; x < chunkSize; x++) {
-            const cx = topLeft.x + ((chunkStartX + x) / width) * (bottomRight.x - topLeft.x);
-            const cy = topLeft.y + ((chunkStartY + y) / height) * (bottomRight.y - topLeft.y);
+            let cx, cy, zx, zy, i = 0;
+            if (!julia) {
+                cx = topLeft.x + ((chunkStartX + x) / width) * (bottomRight.x - topLeft.x);
+                cy = topLeft.y + ((chunkStartY + y) / height) * (bottomRight.y - topLeft.y);
 
-            let zx = 0, zy = 0, i = 0;
+                zx = zx0, zy = zy0;
+            } else {
+                cx = zx0;
+                cy = zy0;
+
+                zx = topLeft.x + ((chunkStartX + x) / width) * (bottomRight.x - topLeft.x);
+                zy = topLeft.y + ((chunkStartY + y) / height) * (bottomRight.y - topLeft.y);
+            }   
 
             while (i < MAX_ITERATIONS && zx * zx + zy * zy < ESCAPE_RADIUS) {
                 const xtemp = zx * zx - zy * zy + cx;
@@ -121,6 +130,7 @@ window.addEventListener('load', () => {
     bottomRight = { x: 2 * aspectRatio, y: -2 };
 
     resizeCanvas();
+    resizeCanvasPoint();
     setupEventListeners();
 });
 
@@ -165,6 +175,9 @@ function processRenderQueue() {
         const { chunkX, chunkY, currentRenderID } = renderQueue.shift();
         activeWorkers++;
 
+        const p = getGridPos(point);
+        console.log(p);
+
         worker.postMessage({
             width,
             height,
@@ -174,7 +187,10 @@ function processRenderQueue() {
             chunkStartY: chunkY * CHUNK_SIZE,
             chunkSize: CHUNK_SIZE,
             renderID: currentRenderID,
-            colors: themes[currentTheme]
+            colors: themes[currentTheme],
+            zx0: p.real,
+            zy0: p.imag,
+            julia: julia
         });
     }
 }

@@ -12,7 +12,7 @@
     <canvas id="fullScreenCanvas"></canvas>
     <div id="buttons">
         <button class="button" onclick="home()">
-            <i class="fas fa-home"></i>
+            <i class="fas fa-rotate-left"></i>
         </button> 
         <button class="button" onclick="theme()">
             <i class="fa-regular fa-sun"></i>
@@ -20,6 +20,26 @@
         <button class="button" onclick="download()">
             <i class="fa-solid fa-download"></i>
         </button>
+    </div>
+
+    <div id="containerPoint">
+        <canvas id="canvasPoint"></canvas>
+        <div id="coord">Z0 = 0.00, 0.00i</div>
+    </div>
+
+    <div id="options">
+        <button class="button" onclick="resetPoint()">
+            <i class="fas fa-rotate-left"></i>
+        </button>
+        <button class="button" onclick="toggleJulia(this)">
+            <i class="fa-solid fa-circle-half-stroke"></i>
+        </button>
+        <button id="togglePointCanvas" class="button" onclick="togglePointCanvas(this)">
+            <i class="fa-solid fa-chevron-up"></i>
+        </button>
+    </div>
+
     <script src="script.js"></script>
+    <script src="scriptPoint.js"></script>
 </body>
 </html>
