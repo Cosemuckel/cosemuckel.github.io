@@ -260,6 +260,7 @@ function debouncedDrawMandelbrot() {
 function setupEventListeners() {
     window.addEventListener('resize', resizeCanvas);
 
+    // Mouse events
     canvas.addEventListener('mousedown', event => {
         if (event.button === 0) {
             panning = true;
@@ -294,33 +295,92 @@ function setupEventListeners() {
 
     canvas.addEventListener('wheel', event => {
         event.preventDefault();
-        const mouseX = event.clientX;
-        const mouseY = event.clientY;
+        handleZoom(event.clientX, event.clientY, event.deltaY < 0 ? 0.9 : 1.1);
+    });
 
-        zoomCenter = { x: mouseX, y: mouseY };
+    // Touch events
+    canvas.addEventListener('touchstart', event => {
+        if (event.touches.length === 1) {
+            panning = true;
+            lastMouse = { x: event.touches[0].clientX, y: event.touches[0].clientY };
+        }
+    });
 
-        const zoomIn = event.deltaY < 0;
-        const factor = zoomIn ? 0.9 : 1.1;
-        zoomFactor *= factor;
+    canvas.addEventListener('touchmove', event => {
+        if (panning && event.touches.length === 1) {
+            const dx = event.touches[0].clientX - lastMouse.x;
+            const dy = event.touches[0].clientY - lastMouse.y;
 
-        ctx.save();
-        ctx.translate(zoomCenter.x, zoomCenter.y);
-        ctx.scale(1 / factor, 1 / factor);
-        ctx.translate(-zoomCenter.x, -zoomCenter.y);
-        ctx.drawImage(canvas, 0, 0);
-        ctx.restore();
+            panView(dx, dy);
 
-        const mouseXWorld = topLeft.x + (mouseX / width) * (bottomRight.x - topLeft.x);
-        const mouseYWorld = topLeft.y + (mouseY / height) * (bottomRight.y - topLeft.y);
+            const worldDx = (dx / width) * (bottomRight.x - topLeft.x);
+            const worldDy = (dy / height) * (bottomRight.y - topLeft.y);
+            topLeft.x -= worldDx;
+            topLeft.y -= worldDy;
+            bottomRight.x -= worldDx;
+            bottomRight.y -= worldDy;
 
-        topLeft.x = mouseXWorld + (topLeft.x - mouseXWorld) * factor;
-        topLeft.y = mouseYWorld + (topLeft.y - mouseYWorld) * factor;
-        bottomRight.x = mouseXWorld + (bottomRight.x - mouseXWorld) * factor;
-        bottomRight.y = mouseYWorld + (bottomRight.y - mouseYWorld) * factor;
+            lastMouse = { x: event.touches[0].clientX, y: event.touches[0].clientY };
+        }
+        // Pinch-to-zoom handling
+        if (event.touches.length === 2) {
+            handlePinchZoom(event);
+        }
+    });
 
+    canvas.addEventListener('touchend', event => {
+        panning = false;
         debouncedDrawMandelbrot();
     });
 }
+
+function handleZoom(mouseX, mouseY, factor) {
+    zoomCenter = { x: mouseX, y: mouseY };
+    zoomFactor *= factor;
+
+    ctx.save();
+    ctx.translate(zoomCenter.x, zoomCenter.y);
+    ctx.scale(1 / factor, 1 / factor);
+    ctx.translate(-zoomCenter.x, -zoomCenter.y);
+    ctx.drawImage(canvas, 0, 0);
+    ctx.restore();
+
+    const mouseXWorld = topLeft.x + (mouseX / width) * (bottomRight.x - topLeft.x);
+    const mouseYWorld = topLeft.y + (mouseY / height) * (bottomRight.y - topLeft.y);
+
+    topLeft.x = mouseXWorld + (topLeft.x - mouseXWorld) * factor;
+    topLeft.y = mouseYWorld + (topLeft.y - mouseYWorld) * factor;
+    bottomRight.x = mouseXWorld + (bottomRight.x - mouseXWorld) * factor;
+    bottomRight.y = mouseYWorld + (bottomRight.y - mouseYWorld) * factor;
+
+    debouncedDrawMandelbrot();
+}
+
+let lastPinchDistance = 0;
+
+function handlePinchZoom(event) {
+    event.preventDefault();
+    const touch1 = event.touches[0];
+    const touch2 = event.touches[1];
+
+    const distance = Math.hypot(
+        touch2.clientX - touch1.clientX,
+        touch2.clientY - touch1.clientY
+    );
+
+    if (lastPinchDistance) {
+        const zoomFactor = distance / lastPinchDistance;
+        const centerX = (touch1.clientX + touch2.clientX) / 2;
+        const centerY = (touch1.clientY + touch2.clientY) / 2;
+        handleZoom(centerX, centerY, zoomFactor);
+    }
+
+    lastPinchDistance = distance;
+}
+
+canvas.addEventListener('touchend', () => {
+    lastPinchDistance = 0;
+});
 
 function home() {
     topLeft = { x: -2 * aspectRatio, y: 2 };
