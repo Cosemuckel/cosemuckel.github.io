@@ -103,7 +103,9 @@ let topLeft = { x: -2, y: 2 };
 let bottomRight = { x: 2, y: -2 };
 let canvas, ctx, width, height;
 let panning = false;
-let lastMouse = { x: 0, y: 0 };
+let zoomMode = false;
+let lastTouchPos = { x: 0, y: 0 };
+let lastTouchDist = 0;
 let zoomCenter = { x: 0, y: 0 };
 let zoomFactor = 1;
 let renderID = 0;
@@ -240,8 +242,6 @@ function panView(dx, dy) {
     }
 
     renderedChunks = newRenderedChunks;
-
-    // We do not initiate new rendering here.
 }
 
 function isChunkVisible(chunkX, chunkY) {
@@ -263,14 +263,14 @@ function setupEventListeners() {
     canvas.addEventListener('mousedown', event => {
         if (event.button === 0) {
             panning = true;
-            lastMouse = { x: event.clientX, y: event.clientY };
+            lastTouchPos = { x: event.clientX, y: event.clientY };
         }
     });
 
     canvas.addEventListener('mousemove', event => {
         if (panning) {
-            const dx = event.clientX - lastMouse.x;
-            const dy = event.clientY - lastMouse.y;
+            const dx = event.clientX - lastTouchPos.x;
+            const dy = event.clientY - lastTouchPos.y;
 
             panView(dx, dy);
 
@@ -281,7 +281,7 @@ function setupEventListeners() {
             bottomRight.x -= worldDx;
             bottomRight.y -= worldDy;
 
-            lastMouse = { x: event.clientX, y: event.clientY };
+            lastTouchPos = { x: event.clientX, y: event.clientY };
         }
     });
 
@@ -320,13 +320,91 @@ function setupEventListeners() {
 
         debouncedDrawMandelbrot();
     });
+
+    canvas.addEventListener('touchstart', (event) => {
+        event.preventDefault();
+        const touch = event.touches[0];
+        lastTouchPos = { x: touch.clientX, y: touch.clientY };
+
+        if (event.touches.length === 2) {
+            zoomMode = true;
+            const touch1 = event.touches[0];
+            const touch2 = event.touches[1];
+            lastTouchDist = Math.sqrt(
+                Math.pow(touch2.clientX - touch1.clientX, 2) +
+                Math.pow(touch2.clientY - touch1.clientY, 2)
+            );
+        } else {
+            panning = true;
+        }
+    });
+
+    canvas.addEventListener('touchmove', (event) => {
+        event.preventDefault();
+        const touch = event.touches[0];
+
+        if (zoomMode) {
+            const touch1 = event.touches[0];
+            const touch2 = event.touches[1];
+            const currentDist = Math.sqrt(
+                Math.pow(touch2.clientX - touch1.clientX, 2) +
+                Math.pow(touch2.clientY - touch1.clientY, 2)
+            );
+            const factor = lastTouchDist / currentDist;
+            lastTouchDist = currentDist;
+
+            const mouseX = (touch1.clientX + touch2.clientX) / 2;
+            const mouseY = (touch1.clientY + touch2.clientY) / 2;
+            zoomCenter = { x: mouseX, y: mouseY };
+
+            zoomFactor *= factor;
+
+            ctx.save();
+            ctx.translate(zoomCenter.x, zoomCenter.y);
+            ctx.scale(1 / factor, 1 / factor);
+            ctx.translate(-zoomCenter.x, -zoomCenter.y);
+            ctx.drawImage(canvas, 0, 0);
+            ctx.restore();
+
+            const mouseXWorld = topLeft.x + (mouseX / width) * (bottomRight.x - topLeft.x);
+            const mouseYWorld = topLeft.y + (mouseY / height) * (bottomRight.y - topLeft.y);
+
+            topLeft.x = mouseXWorld + (topLeft.x - mouseXWorld) * factor;
+            topLeft.y = mouseYWorld + (topLeft.y - mouseYWorld) * factor;
+            bottomRight.x = mouseXWorld + (bottomRight.x - mouseXWorld) * factor;
+            bottomRight.y = mouseYWorld + (bottomRight.y - mouseYWorld) * factor;
+
+            debouncedDrawMandelbrot();
+        } else {
+            const dx = touch.clientX - lastTouchPos.x;
+            const dy = touch.clientY - lastTouchPos.y;
+
+            panView(dx, dy);
+
+            const worldDx = (dx / width) * (bottomRight.x - topLeft.x);
+            const worldDy = (dy / height) * (bottomRight.y - topLeft.y);
+            topLeft.x -= worldDx;
+            topLeft.y -= worldDy;
+            bottomRight.x -= worldDx;
+            bottomRight.y -= worldDy;
+
+            lastTouchPos = { x: touch.clientX, y: touch.clientY };
+        }
+    });
+
+    canvas.addEventListener('touchend', (event) => {
+        event.preventDefault();
+        panning = false;
+        zoomMode = false;
+        debouncedDrawMandelbrot();
+    });
 }
 
 function home() {
     topLeft = { x: -2 * aspectRatio, y: 2 };
     bottomRight = { x: 2 * aspectRatio, y: -2 };
     zoomFactor = 1;
-    
+
     renderedChunks.clear();
 
     debouncedDrawMandelbrot();

@@ -95,6 +95,14 @@ function getMousePos(event) {
     };
 }
 
+function getTouchPos(event) {
+    const rect = canvasPoint.getBoundingClientRect();
+    return {
+        x: event.touches[0].clientX - rect.left,
+        y: event.touches[0].clientY - rect.top
+    };
+}
+
 function getGridPos(pos) {
     const spacing = canvasPoint.width / 10;
 
@@ -103,7 +111,7 @@ function getGridPos(pos) {
 
     const dx = pos.x - originX;
     const dy = originY - pos.y;
-    
+
     const real = dx / spacing / 2;
     const imag = dy / spacing / 2;
 
@@ -137,6 +145,33 @@ canvasPoint.addEventListener('mousemove', (event) => {
     }
 });
 
+canvasPoint.addEventListener('touchstart', (event) => {
+    const pos = getTouchPos(event);
+    const distance = Math.hypot(pos.x - point.x, pos.y - point.y);
+    if (distance < 5) {
+        isDragging = true;
+    }
+});
+
+canvasPoint.addEventListener('touchmove', (event) => {
+    if (isDragging) {
+        const pos = getTouchPos(event);
+        point = pos;
+        drawGrid();
+        drawMarkers();
+        drawPoint();
+
+        const gridPos = getGridPos(point);
+        document.getElementById('coord').innerText = `Z0 = ${gridPos.real.toFixed(2)}, ${gridPos.imag.toFixed(2)}i`;
+
+        debouncedDrawMandelbrot();
+    }
+});
+
+canvasPoint.addEventListener('touchend', () => {
+    isDragging = false;
+});
+
 function resetPoint() {
     point.x = canvasPoint.width / 2;
     point.y = canvasPoint.height / 2;
@@ -154,14 +189,14 @@ function togglePointCanvas(caller) {
     if (!pointCanvasUP) {
         document.getElementById("containerPoint").style.transform = "translateY(-12rem)";
         document.getElementById("options").style.transform = "translateY(-10.5rem)";
-        
+
         caller.style.transform = "rotate(180deg)";
         pointCanvasUP = true;
     }
     else {
         document.getElementById("containerPoint").style.transform = "translateY(0)";
         document.getElementById("options").style.transform = "translateY(0)";
-        
+
         caller.style.transform = "rotate(0deg)";
         pointCanvasUP = false;
     }
