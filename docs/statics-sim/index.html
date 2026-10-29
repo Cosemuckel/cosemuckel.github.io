@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Statics Sim - Polplan</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="boot-msg" role="alert" hidden>
+  <b>This page has to be served over HTTP(S).</b>
+  Browsers block JavaScript modules on <code>file://</code> pages (and very old browsers do not support them at all).
+  Open the hosted version (e.g. the GitHub Pages site) or serve this folder locally, for example
+  <code>python -m http.server 8000</code> and then open <code>http://localhost:8000/</code>.
+</div>
+<script>
+  // Static notice, removed by js/main.js as soon as the ES modules actually run.
+  if (location.protocol === 'file:') document.getElementById('boot-msg').hidden = false;
+</script>
+<script nomodule>document.getElementById('boot-msg').hidden = false;</script>
+<div id="app">
+  <header id="topbar">
+    <h1>Statics Sim <small>Polplan / pole beams</small></h1>
+  </header>
+
+  <div id="toolbar" role="toolbar" aria-label="Tools">
+    <div class="group" id="tools" data-edit-only>
+      <button data-tool="select" class="active" title="Select / move (drag empty space to pan)">Select</button>
+      <button data-tool="line" title="Draw a rod: drag from start to end. Or click points one after another for a multi-segment body; double-click, Enter or Esc finishes">Line</button>
+      <button data-tool="addseg" title="Add a segment to a line body: drag (or click points) starting on the body; ending on another line body merges both">Add segment</button>
+      <button data-tool="pin" title="Pin support: click a body">Pin</button>
+      <button data-tool="roller" title="Roller support: click a body">Roller</button>
+      <button data-tool="joint" title="Joint: click where two bodies meet">Joint</button>
+      <button data-tool="poles" title="Pick pole beams / poles for intersections">Pick poles</button>
+      <button data-tool="delete" title="Delete the body or support you click">Delete</button>
+    </div>
+    <div class="group">
+      <label class="chk"><input type="checkbox" id="chk-sim"> Simulate</label>
+      <button id="btn-play" title="Animate all unlocked modes">Play</button>
+      <label id="sim-t-box" class="field" title="Scrub the simulated motion (same t, same pose)"><span id="sim-t-label">Time</span>
+        <input type="range" id="sim-t" min="-12" max="12" step="0.01" value="0"><output id="sim-t-val"></output></label>
+      <button id="btn-reset" title="Return to the undisplaced configuration">Reset</button>
+    </div>
+    <div class="group">
+      <select id="sel-example" aria-label="Example scene" data-edit-only></select>
+      <button id="btn-clear" data-edit-only>Clear</button>
+      <button id="btn-fit" title="Fit view to the scene">Fit</button>
+      <button id="btn-copy-link" data-edit-only title="Copy a link that reopens this exact setup (it is also the address bar)">Copy link</button>
+      <button id="btn-copy-iframe" data-edit-only title="Copy an iframe snippet that embeds this setup as a read-only viewer">Copy iframe code</button>
+      <button id="btn-panel" title="Show / hide the side panel">Panel</button>
+    </div>
+  </div>
+
+  <div id="main">
+    <div id="stage">
+      <canvas id="view"></canvas>
+      <div id="status"></div>
+      <div id="msg"></div>
+      <div id="viewer-bar"></div>
+    </div>
+
+    <aside id="panel">
+      <section>
+        <h2>Analysis</h2>
+        <div id="analysis"></div>
+        <div id="modes"></div>
+      </section>
+
+      <section>
+        <h2>Display</h2>
+        <label class="chk" data-edit-only><input type="checkbox" data-opt="snap"> Snap to grid</label>
+        <label class="chk"><input type="checkbox" data-opt="grid"> Grid</label>
+        <label class="chk"><input type="checkbox" data-opt="beams"> Pole beams / poles (all supports)</label>
+        <label class="chk"><input type="checkbox" data-opt="inters"> Intersections of picked beams</label>
+        <label class="chk sub"><input type="checkbox" data-opt="kennedy"> Kennedy lines (derived poles)</label>
+        <label class="chk"><input type="checkbox" data-opt="poleLabels"> Pole labels (i,j), ground = 0</label>
+        <label class="chk"><input type="checkbox" data-opt="bodyLabels"> Body numbers</label>
+        <label class="chk"><input type="checkbox" data-opt="displaced"> Displaced shape</label>
+        <label class="chk sub"><input type="checkbox" data-opt="original"> Show original</label>
+        <label class="chk sub"><input type="checkbox" data-opt="vectors"> Displacement vectors</label>
+        <label class="chk"><input type="checkbox" data-opt="bodyPoles"> Body poles (from kinematics)</label>
+        <label class="field">Displacement
+          <input type="range" data-opt="scale" min="-3" max="3" step="0.05">
+          <output id="scale-val"></output>
+        </label>
+        <label class="field">Mode (DOF)
+          <select id="opt-mode"></select>
+        </label>
+      </section>
+
+      <section data-edit-only>
+        <h2>Selected item</h2>
+        <div id="props"><p class="hint">Nothing selected.</p></div>
+      </section>
+
+      <section>
+        <h2>Picked poles / intersections</h2>
+        <div class="row">
+          <button id="btn-sel-all">Pick all</button>
+          <button id="btn-sel-none">Pick none</button>
+        </div>
+        <div id="poles-list"></div>
+      </section>
+    </aside>
+  </div>
+</div>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
