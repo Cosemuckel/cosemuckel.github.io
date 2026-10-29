@@ -18,6 +18,25 @@
   // Static notice, removed by js/main.js as soon as the ES modules actually run.
   if (location.protocol === 'file:') document.getElementById('boot-msg').hidden = false;
 </script>
+<script id="early-mode">
+  // Runs before first paint so an embedded viewer never shows (or, if the modules fail to load, never keeps) the
+  // editing UI. Same rule as isViewer() in js/serialize.js (tests/serialize.test.js checks they agree).
+  (function () {
+    var o = {};
+    function dec(s) { try { return decodeURIComponent(s); } catch (e) { return s; } }
+    [location.search, location.hash].forEach(function (part) {
+      part.replace(/^[?#]\??/, '').replace(/&amp;|%26/gi, '&').split('&').forEach(function (pair) {
+        var i = pair.indexOf('=');
+        var key = dec(i < 0 ? pair : pair.slice(0, i)).toLowerCase();
+        if (key) o[key] = i < 0 ? '' : dec(pair.slice(i + 1));
+      });
+    });
+    function on(k) { return k in o && /^(|1|true|yes|on)$/i.test(o[k].trim()); }
+    var cls = document.documentElement.classList;
+    if ((on('embed') || on('view')) && !on('edit')) cls.add('viewer');
+    if (on('embed')) cls.add('embed');
+  })();
+</script>
 <script nomodule>document.getElementById('boot-msg').hidden = false;</script>
 <div id="app">
   <header id="topbar">
@@ -79,7 +98,6 @@
         <label class="chk"><input type="checkbox" data-opt="displaced"> Displaced shape</label>
         <label class="chk sub"><input type="checkbox" data-opt="original"> Show original</label>
         <label class="chk sub"><input type="checkbox" data-opt="vectors"> Displacement vectors</label>
-        <label class="chk"><input type="checkbox" data-opt="bodyPoles"> Body poles (from kinematics)</label>
         <label class="field">Displacement
           <input type="range" data-opt="scale" min="-3" max="3" step="0.05">
           <output id="scale-val"></output>

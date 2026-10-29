@@ -9,7 +9,7 @@
 
 import { sub, add, mul, len, gridStep, clipRayToRect } from './geometry.js';
 import { bodySegments, nearestPointOnBody } from './model.js';
-import { worldPoint, pointVelocity, supportPoint, bodyMotion, poleOf } from './kinematics.js';
+import { worldPoint, pointVelocity, supportPoint } from './kinematics.js';
 import { derivedPoles, kennedyLines, derivedLabel, poleName } from './kennedy.js';
 
 const C = {
@@ -152,28 +152,11 @@ export function render(ctx, F) {
     }
   }
 
-  // Displacement vectors and kinematic body poles
+  // Displacement vectors
   if (showDisp && opts.vectors) {
     ctx.strokeStyle = ctx.fillStyle = C.displaced;
     ctx.lineWidth = 1.5;
     cur.forEach((pts, i) => pts.forEach((P, k) => arrow(ctx, T(P), T(disp[i][k]))));
-  }
-  if (F.dq && opts.bodyPoles) {
-    F.sys.bodies.forEach((b, i) => {
-      const pole = poleOf(bodyMotion(q, F.dq, i));
-      if (!pole) return;
-      const label = opts.poleLabels ? poleName(0, i + 1, pole.kind === 'infinity') : `P${i + 1}`;
-      if (pole.kind === 'point') {
-        const P = T(pole.point);
-        ctx.fillStyle = '#7b3fb0';
-        ctx.beginPath();
-        ctx.arc(P.x, P.y, 5, 0, Math.PI * 2);
-        ctx.fill();
-        labelText(ctx, label, P.x + 8, P.y - 8, { color: '#7b3fb0', font: 'bold 12px system-ui, sans-serif' });
-      } else {
-        drawInfinity(ctx, w, h, T(centroid(cur[i])), sDir(pole.direction), label, '#7b3fb0');
-      }
-    });
   }
 
   // Tool preview

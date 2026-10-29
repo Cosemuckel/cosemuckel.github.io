@@ -4,6 +4,7 @@ import { readParams, decodeSetup } from './serialize.js';
 /**
  * Options come from the query string and/or the URL hash (e.g. "#embed=1&example=arch"),
  * so an embedding page can use either. The hash wins when both define a key.
+ * Option names are case-insensitive; on/off options accept 1|true|yes|on (or a bare name) and 0|false|no|off.
  *   s=TEXT           whole setup (bodies, supports, display flags, ...) as written by the editor; wins over example
  *   embed=1          read-only viewer for iframes, no title bar (view=1: same viewer with the title bar)
  *   edit=1           with embed=1/view=1: keep the full editor

@@ -32,11 +32,13 @@ export const LIMITS = {
 };
 
 /** Display flags stored in the setup, in a fixed order (bit i of the mask is VIEW_FLAGS[i]); append only. */
-export const VIEW_FLAGS = ['grid', 'beams', 'inters', 'kennedy', 'poleLabels', 'bodyLabels', 'displaced', 'original', 'vectors', 'bodyPoles'];
+export const VIEW_FLAGS = ['grid', 'beams', 'inters', 'kennedy', 'poleLabels', 'bodyLabels', 'displaced', 'original', 'vectors'];
+/** Flag bits above VIEW_FLAGS that older links may carry (the removed "bodyPoles" display); read and ignored. */
+const RETIRED_FLAG_BITS = 1;
 /** Flag values of a fresh editor; a setup only stores the flags when they differ from this. */
 export const DEFAULT_FLAGS = {
   grid: true, beams: true, inters: true, kennedy: true, poleLabels: true, bodyLabels: true,
-  displaced: false, original: true, vectors: false, bodyPoles: false,
+  displaced: false, original: true, vectors: false,
 };
 export const DEFAULT_SCALE = 0.5;
 export const SCALE_RANGE = 3;
@@ -236,7 +238,7 @@ export function unpackSetup(bytes) {
   const unit = UNITS[present & 7];
   const maxInt = LIMITS.coord * unit;
 
-  const mask = present & HAS_FLAGS ? r.uint(2 ** VIEW_FLAGS.length - 1, 'display flags') : DEFAULT_MASK;
+  const mask = present & HAS_FLAGS ? r.uint(2 ** (VIEW_FLAGS.length + RETIRED_FLAG_BITS) - 1, 'display flags') : DEFAULT_MASK;
   const flags = {};
   VIEW_FLAGS.forEach((name, i) => {
     flags[name] = Math.floor(mask / 2 ** i) % 2 === 1;
@@ -423,15 +425,60 @@ export async function decodeSetup(text) {
 
 // ------------------------------------------------------------------- URL options
 
-/** Parses "#a=1&b=2" / "#?a=1" into URLSearchParams. */
-export const parseHash = (hash) => new URLSearchParams(String(hash).replace(/^#\??/, ''));
+/**
+ * Option text may reach the page HTML-escaped ("&amp;") or percent-escaped ("%26") when an iframe snippet was
+ * pasted into a context that does not decode it; neither character sequence can occur in a base64url setup or
+ * in a plain option value, so both are read as the "&" separator. Without this, "#s=...&amp;embed=1" silently
+ * lost its embed flag and showed the full editor.
+ */
+const normalizeOptionText = (text) => String(text).replace(/&amp;|%26/gi, '&');
 
-/** Query string options overlaid with hash options (hash wins). */
+/**
+ * URLSearchParams with option keys lower-cased ("EMBED=1" is "embed=1"). Values are untouched: the `s` setup
+ * payload is case-sensitive base64url, and a key that only differs from `s` by case is left alone rather than
+ * being turned into the payload key.
+ */
+function parseOptions(text) {
+  const params = new URLSearchParams();
+  for (const [k, v] of new URLSearchParams(normalizeOptionText(text))) {
+    const lower = k.toLowerCase();
+    params.append(lower === 's' ? k : lower, v);
+  }
+  return params;
+}
+
+/** Parses "#a=1&b=2" / "#?a=1" into URLSearchParams (keys lower-cased, see parseOptions). */
+export const parseHash = (hash) => parseOptions(String(hash).replace(/^#\??/, ''));
+
+/** Query string options overlaid with hash options (hash wins). Same parsing for both, any key order. */
 export function readParams(search, hash) {
-  const params = new URLSearchParams(search);
+  const params = parseOptions(String(search).replace(/^\?/, ''));
   for (const [k, v] of parseHash(hash)) params.set(k, v);
   return params;
 }
+
+const OPTION_TRUE = new Set(['', '1', 'true', 'yes', 'on']);
+const OPTION_FALSE = new Set(['0', 'false', 'no', 'off']);
+
+/**
+ * Boolean URL option: true for a present key with no value ("#embed", "?embed", "embed=") or "1/true/yes/on"
+ * (case-insensitive), false for "0/false/no/off", undefined when the key is absent or the value is unrecognised.
+ */
+export function optionFlag(params, key) {
+  if (!params.has(key)) return undefined;
+  const value = params.get(key).trim().toLowerCase();
+  if (OPTION_TRUE.has(value)) return true;
+  if (OPTION_FALSE.has(value)) return false;
+  return undefined;
+}
+
+/**
+ * Presentation mode from the URL options: the read-only viewer (embed or view on) unless edit on keeps the
+ * editor. The inline script in index.html repeats this rule to hide the editing UI before any module runs;
+ * tests/serialize.test.js keeps the two in agreement.
+ */
+export const isViewer = (params) =>
+  (optionFlag(params, 'embed') === true || optionFlag(params, 'view') === true) && optionFlag(params, 'edit') !== true;
 
 /**
  * Hash text (without "#") for the given hash options with the encoded setup stored under `s`.

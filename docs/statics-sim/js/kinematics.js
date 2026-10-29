@@ -7,6 +7,7 @@
 //   clamp  : theta = 0                          (1, added for clamped pins)
 //   slide  : n . (P(p) - p) = 0, n = unit normal of the rail   (1; roller)
 //   joint  : P_a(p) - P_b(p) = 0                (2 per extra body at the point)
+//   fix    : q[index] - value = 0               (1; only added by withFixedCoordinates, to hold a driver)
 // A locked roller is treated as a pin.
 //
 // Infinitesimal motions dq satisfy J(q) dq = 0, J = dr/dq, so they span the null space of
@@ -19,7 +20,7 @@ import { nullspace, solve } from './linalg.js';
 import { bodiesAtPoint } from './model.js';
 import { pairsLabel } from './kennedy.js';
 
-const EQ_COUNT = { pin: 2, clamp: 1, slide: 1, joint: 2 };
+const EQ_COUNT = { pin: 2, clamp: 1, slide: 1, joint: 2, fix: 1 };
 const NULL_TOL = 1e-7;
 const CORRECT_TOL = 1e-10;
 
@@ -62,6 +63,15 @@ export function buildSystem(scene) {
   }
   const eq = constraints.reduce((sum, c) => sum + EQ_COUNT[c.kind], 0);
   return { n: bodies.length, bodies, constraints, supportInfo, eq };
+}
+
+/**
+ * Copy of `sys` with extra constraints that hold the generalised coordinates `indices` at their values in `q`
+ * (used to freeze all but one driver coordinate of a multi-DOF mechanism).
+ */
+export function withFixedCoordinates(sys, indices, q) {
+  const fixes = indices.map((index) => ({ kind: 'fix', index, value: q[index] }));
+  return { ...sys, constraints: [...sys.constraints, ...fixes], eq: sys.eq + fixes.length };
 }
 
 export const zeroState = (sys) => new Array(3 * sys.n).fill(0);
@@ -117,6 +127,9 @@ export function evaluate(sys, q) {
     } else if (c.kind === 'clamp') {
       newRow()[3 * c.body + 2] = 1;
       r.push(q[3 * c.body + 2]);
+    } else if (c.kind === 'fix') {
+      newRow()[c.index] = 1;
+      r.push(q[c.index] - c.value);
     } else if (c.kind === 'slide') {
       const P = worldPoint(q, c.body, c.p);
       const dP = worldPointDTheta(q, c.body, c.p);

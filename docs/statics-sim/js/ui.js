@@ -5,21 +5,22 @@ import * as M from './model.js';
 import * as K from './kinematics.js';
 import { derivePoles, derivedPoles, poleName } from './kennedy.js';
 import { render } from './render.js';
-import { createTrajectory, describeMode, advanceParams, LIMIT } from './motion.js';
-import { encodeSetup, parseHash, hashWithSetup, VIEW_FLAGS, DEFAULT_FLAGS, DEFAULT_SCALE } from './serialize.js';
+import { createTrajectory, describeMode, advanceParams, paramFromValue, valueFromParam, displayRange, FREE_TRAVEL } from './motion.js';
+import { encodeSetup, parseHash, hashWithSetup, isViewer, optionFlag, VIEW_FLAGS, DEFAULT_FLAGS, DEFAULT_SCALE } from './serialize.js';
 
 const $ = (id) => document.getElementById(id);
 const PICK_PX = 10; // hit radius for supports / poles (screen px)
 const LINE_PX = 7; // hit distance for bodies and beams (screen px)
 const CLICK_PX = 4; // pointer travel below this is a click, not a drag
-const PLAY_SPEED = 0.04; // mode parameter (length units) advanced per animation frame
+const PLAY_SPEED = 0.04; // mode parameter (length units) advanced per animation frame; ranges longer than 24 play up to 4x faster
+const FREE_RANGE = { kind: 'unbounded', min: -FREE_TRAVEL, max: FREE_TRAVEL }; // shown until the real ranges are known
 
 export function startApp(params, initial = {}) {
   const canvas = $('view');
   const ctx = canvas.getContext('2d');
   // Viewer: read-only presentation for iframes (embed=1 or view=1); edit=1 keeps the full editor inside an iframe.
-  const viewer = (params.get('embed') === '1' || params.get('view') === '1') && params.get('edit') !== '1';
-  const zoomEnabled = params.get('zoom') !== '0'; // viewer only: zoom=0 freezes the view (no wheel zoom, no pan)
+  const viewer = isViewer(params);
+  const zoomEnabled = optionFlag(params, 'zoom') !== false; // viewer only: zoom=0 freezes the view (no wheel zoom, no pan)
 
   const S = {
     scene: M.createScene(),
@@ -39,9 +40,12 @@ export function startApp(params, initial = {}) {
     drag: null,
     preview: null,
     chain: null, // open polyline being drawn: { target: body id | null, pts: [...] }
-    // Simulation: `traj` is the finite-motion trajectory rebased at the pose where the user last left it;
-    // params/dir/active/locked/ranges are per mode (see motion.js). traj = null means "rebase when needed".
-    sim: { on: false, playing: false, traj: null, params: [], dir: [], active: [], locked: [], ranges: null, rebaseTimer: 0 },
+    // Simulation: `traj` is the finite-motion trajectory rebased at the pose where the user last left it.
+    // params/dir/active/locked/ranges are per mode (see motion.js): params are display values (the slider
+    // positions), offsets[i] the display value at the rebase pose, ranges[i] the display range (min, max, kind).
+    // traj = null means "rebase when needed"; stale = another mode moved, so the ranges are re-derived at the
+    // current pose (staleTimer) before they are relied on.
+    sim: { on: false, playing: false, traj: null, params: [], offsets: [], dir: [], active: [], locked: [], ranges: null, angleRefs: [], rebaseTimer: 0, stale: false, staleTimer: 0 },
   };
   const share = { timer: 0, seq: 0, last: '', live: false }; // address-bar sync state (see "share link" below)
 
@@ -475,8 +479,10 @@ export function startApp(params, initial = {}) {
     if (!on) setPlaying(false);
   }
   function setPlaying(on) {
+    const wasPlaying = S.sim.playing;
     S.sim.playing = on;
     if (!on) S.sim.active = S.sim.active.map(() => false);
+    if (wasPlaying && !on) markRangesStale();
     $('btn-play').textContent = on ? 'Pause' : 'Play';
     $('btn-play').classList.toggle('on', on);
     if (on) requestAnimationFrame(tick);
@@ -489,45 +495,97 @@ export function startApp(params, initial = {}) {
 
   /** The pose was changed by something other than the trajectory: rebase it at the current pose when next needed. */
   function dropTrajectory() {
+    clearTimeout(S.sim.staleTimer);
+    S.sim.staleTimer = 0;
+    S.sim.stale = false;
     S.sim.traj = null;
     S.sim.ranges = null;
   }
-  /** Trajectory rebased at the current pose (mode parameters restart at 0 there); keeps per-mode locks if the mode count is unchanged. */
-  function ensureTrajectory() {
+  /**
+   * Trajectory rebased at the current pose (mode values restart at 0 there); keeps per-mode locks if the mode
+   * count is unchanged. `fresh` also re-derives the ranges of a trajectory whose other modes have moved since.
+   */
+  function ensureTrajectory(fresh = false) {
     const sim = S.sim;
-    if (sim.traj) return sim.traj;
-    clearTimeout(sim.rebaseTimer);
-    sim.rebaseTimer = 0;
-    sim.traj = createTrajectory(S.sys, S.q);
-    const k = sim.traj.count;
-    sim.ranges = sim.traj.modes.map((_, i) => sim.traj.range(i));
-    sim.params = new Array(k).fill(0);
-    sim.dir = new Array(k).fill(1);
-    sim.active = new Array(k).fill(false);
-    if (sim.locked.length !== k) sim.locked = new Array(k).fill(false);
-    S.opts.mode = Math.min(S.opts.mode, Math.max(0, k - 1));
-    modeDescriptions = sim.traj.modes.map((m) => describeMode(S.sys, S.q, m));
+    if (!sim.traj) rebuildTrajectory(null);
+    else if (fresh && sim.stale) rebuildTrajectory({ values: sim.params, ranges: sim.ranges });
     return sim.traj;
   }
+  /**
+   * Builds the trajectory at the current pose and classifies every mode there (the other modes held at
+   * this pose). `keep` = { values, ranges } carries over the displayed values and the fixed free-side
+   * travel when an existing trajectory is rebased at its current pose.
+   */
+  function rebuildTrajectory(keep) {
+    const sim = S.sim;
+    clearTimeout(sim.rebaseTimer);
+    clearTimeout(sim.staleTimer);
+    sim.rebaseTimer = 0;
+    sim.staleTimer = 0;
+    sim.stale = false;
+    const traj = createTrajectory(S.sys, S.q);
+    const k = traj.count;
+    const carried = !!keep && keep.values.length === k;
+    const infos = traj.modes.map((_, i) => traj.modeRange(i));
+    const offsets = carried ? keep.values.slice() : new Array(k).fill(0);
+    const angleRefs = infos.map((info, i) => {
+      if (!info.angle) return null;
+      const before = carried && sim.angleRefs[i];
+      if (before && before.body === info.angle.body && before.sign === info.angle.sign) return before;
+      return { body: info.angle.body, sign: info.angle.sign, theta: S.q[3 * info.angle.body + 2] };
+    });
+    sim.traj = traj;
+    sim.offsets = offsets;
+    sim.angleRefs = angleRefs;
+    sim.ranges = infos.map((info, i) => displayRange(info, offsets[i], carried ? keep.ranges[i] : undefined));
+    sim.params = offsets.slice();
+    if (!carried) {
+      sim.dir = new Array(k).fill(1);
+      sim.active = new Array(k).fill(false);
+    }
+    if (sim.locked.length !== k) sim.locked = new Array(k).fill(false);
+    S.opts.mode = Math.min(S.opts.mode, Math.max(0, k - 1));
+    // Several modes are named after their driver coordinate; a single mode after the body that moves most.
+    modeDescriptions = traj.modes.map((m, i) => (traj.drivers[i] ? traj.drivers[i].label : describeMode(S.sys, S.q, m)));
+  }
+  /** A mode value changed while several modes exist: the ranges of the other modes belong to the old pose. */
+  function markRangesStale() {
+    const sim = S.sim;
+    if (!sim.traj || sim.traj.count < 2) return;
+    sim.stale = true;
+    clearTimeout(sim.staleTimer);
+    sim.staleTimer = setTimeout(() => {
+      sim.staleTimer = 0;
+      if (sim.traj && sim.stale && !sim.playing) {
+        ensureTrajectory(true);
+        updateMotionUI();
+      }
+    }, 150);
+  }
 
-  /** Moves to the pose for mode parameters t (the pose is a pure function of t); returns false when blocked. */
-  function applyParams(t) {
-    const pose = S.sim.traj.poseAt(t);
+  /** Trajectory parameters t for the display values u (per-mode offsets / wrap-around of closed modes). */
+  const paramsOf = (u) => u.map((v, i) => paramFromValue(S.sim.ranges[i], S.sim.offsets[i], v));
+
+  /** Moves to the pose for display values u (the pose is a pure function of u); returns false when blocked. */
+  function applyValues(u) {
+    const sim = S.sim;
+    const pose = sim.traj.poseAt(paramsOf(u));
     S.q = pose.q;
-    S.sim.params = pose.params.slice();
+    sim.params = pose.blocked ? pose.params.map((t, i) => valueFromParam(sim.ranges[i], sim.offsets[i], t)) : u.slice();
     return !pose.blocked;
   }
 
   function tick() {
     const sim = S.sim;
     if (!sim.playing) return;
-    const traj = ensureTrajectory();
+    const traj = ensureTrajectory(true);
     if (!sim.active.some((a, i) => a && !sim.locked[i])) {
       setPlaying(false);
       return;
     }
-    const next = advanceParams({ values: sim.params, dir: sim.dir, playing: sim.active, locked: sim.locked, ranges: sim.ranges }, PLAY_SPEED);
-    const pose = traj.poseAt(next.values);
+    const speeds = sim.ranges.map((r) => PLAY_SPEED * Math.min(4, Math.max(1, (r.max - r.min) / 24)));
+    const next = advanceParams({ values: sim.params, dir: sim.dir, playing: sim.active, locked: sim.locked, ranges: sim.ranges }, speeds);
+    const pose = traj.poseAt(paramsOf(next.values));
     if (pose.blocked) {
       // The combined motion hit a limit that no single mode reaches: turn the playing modes round.
       sim.dir = sim.dir.map((d, i) => (sim.active[i] && !sim.locked[i] ? -d : d));
@@ -540,16 +598,42 @@ export function startApp(params, initial = {}) {
     if (sim.playing) requestAnimationFrame(tick);
   }
 
-  /** Sets one mode parameter (slider scrub): pauses playback and shows the pose for the new parameters. */
+  /** Sets one mode value (slider scrub): pauses playback and shows the pose for the new values. */
   function scrubMode(i, value) {
     setSim(true);
     setPlaying(false);
     ensureTrajectory();
-    const t = S.sim.params.slice();
-    t[i] = value;
-    if (!applyParams(t)) message('Motion blocked: that combination of modes is out of reach.');
+    const u = S.sim.params.slice();
+    u[i] = value;
+    if (!applyValues(u)) message('Motion blocked: that combination of modes is out of reach.');
     S.opts.mode = i;
+    markRangesStale();
     refresh();
+  }
+
+  const KIND_LABEL = { closed: 'full revolution', limited: 'limited', half: 'limited on one side', unbounded: 'no limit' };
+  /** Tooltip explaining the range of mode m. */
+  function rangeTitle(m) {
+    const r = S.sim.ranges && S.sim.ranges[m];
+    if (!r) return '';
+    const span = `${fmtT(r.min)} to ${fmtT(r.max)}`;
+    switch (r.kind) {
+      case 'closed': return `Full revolution: one loop of the motion (${span}); Play repeats it. The end is the same pose as the start.`;
+      case 'limited': return `Limited motion between two limits (${span}); Play turns round at each end.`;
+      case 'half': return `Limited on one side (${span}); the other side stops at a fixed travel of ${FREE_TRAVEL}. Play turns round at each end.`;
+      default: return `No limit found within ${fmtT(r.searched)} of travel (a loop longer than that is not detected either): showing a fixed range of +-${FREE_TRAVEL} (${span}). Play turns round at each end.`;
+    }
+  }
+  /** Readout of mode m: the angle in degrees for a mode that turns a body once round, otherwise the parameter t. */
+  function valueText(m) {
+    const sim = S.sim;
+    const ref = sim.traj && sim.angleRefs[m];
+    const range = sim.ranges && sim.ranges[m];
+    if (ref && range && range.kind === 'closed') {
+      const turn = ref.sign * (S.q[3 * ref.body + 2] - ref.theta);
+      return `${Math.round(((((turn * 180) / Math.PI) % 360) + 360) % 360) % 360}°`;
+    }
+    return fmtT(sim.traj ? sim.params[m] : 0);
   }
 
   const fmtT = (v) => (Math.abs(v) < 5e-3 ? 0 : v).toFixed(2);
@@ -571,12 +655,13 @@ export function startApp(params, initial = {}) {
     const i = Math.min(S.opts.mode, Math.max(0, k - 1));
     $('sim-t-box').style.display = k > 0 ? '' : 'none';
     if (k > 0) {
-      const range = sim.ranges ? sim.ranges[i] : { min: -LIMIT, max: LIMIT };
+      const range = sim.ranges ? sim.ranges[i] : FREE_RANGE;
       slider.min = String(range.min);
       slider.max = String(range.max);
       slider.value = String(sim.traj ? sim.params[i] : 0);
       slider.disabled = !sim.traj || !!sim.locked[i];
-      $('sim-t-val').textContent = `t = ${fmtT(sim.traj ? sim.params[i] : 0)}`;
+      $('sim-t-val').textContent = sim.ranges && sim.angleRefs[i] && range.kind === 'closed' ? valueText(i) : `t = ${valueText(i)}`;
+      $('sim-t-box').title = sim.ranges ? rangeTitle(i) : 'Scrub the simulated motion (same t, same pose)';
       $('sim-t-label').textContent = k > 1 ? `Mode ${i + 1}` : 'Time';
     }
     // Panel: one row per independent mode when there are several.
@@ -598,19 +683,20 @@ export function startApp(params, initial = {}) {
           '<label class="field"><input type="range" class="mode-t" step="0.01"><output class="mode-val"></output></label></div>').join('');
     }
     box.querySelectorAll('.mode').forEach((row, m) => {
-      const range = sim.ranges ? sim.ranges[m] : { min: -LIMIT, max: LIMIT };
+      const range = sim.ranges ? sim.ranges[m] : FREE_RANGE;
       const t = row.querySelector('.mode-t');
       t.min = String(range.min);
       t.max = String(range.max);
       t.value = String(sim.traj ? sim.params[m] : 0);
       t.disabled = !sim.traj || !!sim.locked[m];
-      row.querySelector('.mode-val').textContent = fmtT(sim.traj ? sim.params[m] : 0);
+      row.querySelector('.mode-val').textContent = valueText(m);
       row.querySelector('.mode-lock').checked = !!sim.locked[m];
       const play = row.querySelector('.mode-play');
       play.classList.toggle('on', !!sim.active[m]);
       play.textContent = sim.active[m] ? 'Pause' : 'Play';
       play.disabled = !sim.traj || !!sim.locked[m];
-      row.querySelector('.mode-desc').textContent = modeDescriptions[m] || '';
+      row.querySelector('.mode-desc').textContent = (modeDescriptions[m] || '') + (sim.ranges ? ` (${KIND_LABEL[range.kind]})` : '');
+      row.title = sim.ranges ? rangeTitle(m) : '';
       row.classList.toggle('current', m === i);
     });
   }
@@ -752,10 +838,10 @@ export function startApp(params, initial = {}) {
 
   /** Absolute URL of the current setup; `embed` makes it the read-only viewer used inside an iframe. */
   async function setupUrl({ embed }) {
-    const hash = parseHash(window.location.hash);
+    let hash = parseHash(window.location.hash);
     if (embed) {
-      hash.set('embed', '1');
-      for (const k of ['toolbar', 'panel', 'edit', 'view']) hash.delete(k);
+      for (const k of ['toolbar', 'panel', 'edit', 'view', 'embed']) hash.delete(k);
+      hash = new URLSearchParams([['embed', '1'], ...hash]); // embed first: survives truncation / bad escaping of what follows
     }
     return window.location.href.split('#')[0] + '#' + hashWithSetup(hash, await encodeSetup(captureSetup()));
   }
@@ -998,14 +1084,14 @@ export function startApp(params, initial = {}) {
 
   new ResizeObserver(resize).observe($('stage'));
   setTool('select');
-  const embedded = params.get('embed') === '1';
+  const embedded = optionFlag(params, 'embed') === true;
   document.body.classList.toggle('embed', embedded);
-  document.body.classList.toggle('no-toolbar', params.get('toolbar') === '0');
-  const panelWanted = params.has('panel') ? params.get('panel') === '1' : (viewer || !embedded) && window.innerWidth > 720;
+  document.body.classList.toggle('no-toolbar', optionFlag(params, 'toolbar') === false);
+  const panelWanted = optionFlag(params, 'panel') ?? ((viewer || !embedded) && window.innerWidth > 720);
   if (viewer) setupViewer();
   document.body.classList.toggle('panel-hidden', !panelWanted);
   resize();
-  if (params.get('displaced') === '1') {
+  if (optionFlag(params, 'displaced') === true) {
     S.opts.displaced = true;
     document.querySelector('[data-opt="displaced"]').checked = true;
   }

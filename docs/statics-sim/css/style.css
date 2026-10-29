@@ -57,7 +57,8 @@ button.on { background: #d9822b; color: #fff; border-color: #d9822b; }
 #poles-list ul { margin: 4px 0; padding-left: 18px; }
 
 body.panel-hidden #panel { display: none; }
-body.embed #topbar { display: none; }
+/* .embed / .viewer sit on <html> (early script in index.html) and on <body> (js/ui.js). */
+.embed #topbar { display: none; }
 body.no-toolbar #toolbar { display: none; }
 
 @media (max-width: 720px) {
@@ -81,7 +82,7 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
 /* Viewer mode (embed=1 / view=1): read-only, only the sidebar and two view buttons remain. */
 #viewer-bar { display: none; position: absolute; right: 8px; top: 6px; gap: 4px; }
 body.viewer #viewer-bar { display: flex; }
-body.viewer #toolbar { display: none; }
+.viewer #toolbar, .viewer [data-edit-only] { display: none !important; }
 body.viewer.view-fixed #view { touch-action: auto; }
 #motion-box { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
 #motion-box #sim-t-box { flex: 1 1 100%; }
