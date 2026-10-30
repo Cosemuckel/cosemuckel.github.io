@@ -1,3 +1,4 @@
+// @ts-check
 // Pure 2D geometry helpers (no DOM). World coordinates are y-up.
 
 export const EPS = 1e-9;

@@ -1,3 +1,4 @@
+// @ts-check
 // Planar rigid-body kinematics (pure math, no DOM).
 //
 // Generalised coordinates: every body i has pose q[3i..3i+2] = (tx, ty, theta) and a
@@ -8,6 +9,7 @@
 //   slide  : n . (P(p) - p) = 0, n = unit normal of the rail   (1; roller)
 //   joint  : P_a(p) - P_b(p) = 0                (2 per extra body at the point)
 //   fix    : q[index] - value = 0               (1; only added by withFixedCoordinates, to hold a driver)
+//   driver : driver.value(q) - value = 0       (1; only added by withFixedDrivers, holds a non-index driver)
 // A locked roller is treated as a pin.
 //
 // Infinitesimal motions dq satisfy J(q) dq = 0, J = dr/dq, so they span the null space of
@@ -20,7 +22,7 @@ import { nullspace, solve } from './linalg.js';
 import { bodiesAtPoint } from './model.js';
 import { pairsLabel } from './kennedy.js';
 
-const EQ_COUNT = { pin: 2, clamp: 1, slide: 1, joint: 2, fix: 1 };
+const EQ_COUNT = { pin: 2, clamp: 1, slide: 1, joint: 2, fix: 1, driver: 1 };
 const NULL_TOL = 1e-7;
 const CORRECT_TOL = 1e-10;
 
@@ -74,6 +76,16 @@ export function withFixedCoordinates(sys, indices, q) {
   return { ...sys, constraints: [...sys.constraints, ...fixes], eq: sys.eq + fixes.length };
 }
 
+/**
+ * Like withFixedCoordinates, for driver objects ({ index?, value(q), gradient(q) }, see sim/drivers.js): drivers that
+ * are a plain coordinate keep the cheap `fix` row, others hold `value(q)` through a general `driver` constraint.
+ */
+export function withFixedDrivers(sys, drivers, q) {
+  const fixes = drivers.map((d) =>
+    d.index !== undefined ? { kind: 'fix', index: d.index, value: q[d.index] } : { kind: 'driver', driver: d, value: d.value(q) });
+  return { ...sys, constraints: [...sys.constraints, ...fixes], eq: sys.eq + fixes.length };
+}
+
 export const zeroState = (sys) => new Array(3 * sys.n).fill(0);
 
 /** World position of body-fixed reference point p. */
@@ -102,8 +114,21 @@ function worldPointDTheta(q, i, p) {
   return { x: -s * p.x - c * p.y, y: c * p.x - s * p.y };
 }
 
-/** Residuals r(q) and Jacobian J(q) (rows = equations, columns = 3 per body). */
+let lastEvaluation = null; // { sys, q (copy), result }: the pose a step converged at is analysed next, so reuse it
+
+/**
+ * Residuals r(q) and Jacobian J(q) (rows = equations, columns = 3 per body). The result of the latest call is reused
+ * when the same system is evaluated at an equal pose; callers must treat r and J as read-only.
+ */
 export function evaluate(sys, q) {
+  const cached = lastEvaluation;
+  if (cached && cached.sys === sys && cached.q.length === q.length && cached.q.every((v, i) => v === q[i])) return cached.result;
+  const result = evaluateUncached(sys, q);
+  lastEvaluation = { sys, q: q.slice(), result };
+  return result;
+}
+
+function evaluateUncached(sys, q) {
   const cols = 3 * sys.n;
   const r = [];
   const J = [];
@@ -130,6 +155,9 @@ export function evaluate(sys, q) {
     } else if (c.kind === 'fix') {
       newRow()[c.index] = 1;
       r.push(q[c.index] - c.value);
+    } else if (c.kind === 'driver') {
+      newRow().splice(0, 3 * sys.n, ...c.driver.gradient(q));
+      r.push(c.driver.value(q) - c.value);
     } else if (c.kind === 'slide') {
       const P = worldPoint(q, c.body, c.p);
       const dP = worldPointDTheta(q, c.body, c.p);
@@ -324,15 +352,36 @@ export function correct(sys, q0, maxIter = 30) {
   let q = q0.slice();
   for (let it = 0; it < maxIter; it++) {
     const { r, J } = evaluate(sys, q);
-    const res = r.reduce((m, v) => Math.max(m, Math.abs(v)), 0);
+    let res = 0;
+    for (let a = 0; a < r.length; a++) res = Math.max(res, Math.abs(r[a]));
     if (res < CORRECT_TOL) return { q, ok: true, residual: res };
     const m = r.length;
-    const JJt = Array.from({ length: m }, (_, a) =>
-      Array.from({ length: m }, (_, b) => J[a].reduce((s, v, k) => s + v * J[b][k], 0) + (a === b ? 1e-10 : 0)),
-    );
+    // Rows of J touch few coordinates: JJt and J^T y only visit the non-zero entries (same sums, same order).
+    const nonZeros = J.map((row) => {
+      const cols = [];
+      for (let k = 0; k < row.length; k++) if (row[k] !== 0) cols.push(k);
+      return cols;
+    });
+    const rowsOfColumn = Array.from({ length: q.length }, () => []);
+    nonZeros.forEach((cols, a) => cols.forEach((k) => rowsOfColumn[k].push(a)));
+    const JJt = Array.from({ length: m }, () => new Array(m).fill(0));
+    for (let a = 0; a < m; a++) {
+      const rowA = J[a];
+      const target = JJt[a];
+      for (const k of nonZeros[a]) {
+        const v = rowA[k];
+        for (const b of rowsOfColumn[k]) target[b] += v * J[b][k];
+      }
+      target[a] += 1e-10;
+    }
     const y = solve(JJt, r);
     if (!y) return { q, ok: false, residual: res };
-    q = q.map((v, k) => v - J.reduce((s, row, a) => s + row[k] * y[a], 0));
+    const shift = new Array(q.length).fill(0);
+    for (let a = 0; a < m; a++) {
+      const row = J[a];
+      for (const k of nonZeros[a]) shift[k] += row[k] * y[a];
+    }
+    q = q.map((v, k) => v - shift[k]);
   }
   const { r } = evaluate(sys, q);
   const residual = r.reduce((m, v) => Math.max(m, Math.abs(v)), 0);

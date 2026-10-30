@@ -1,3 +1,4 @@
+// @ts-check
 // Scene setup <-> URL-safe string (pure: no DOM, no storage).
 //
 // A "setup" is the shareable state of the app:
@@ -5,7 +6,9 @@
 //     flags: { beams: true, ... },              display toggles named in VIEW_FLAGS
 //     scale, mode,                              displacement scale and selected mode
 //     picks: [supportId, ...],                  picked pole beams / poles
-//     locked: [bool, ...] }                     per-mode lock state of the simulation
+//     locked: [bool, ...],                      per-mode lock state of the simulation
+//     drivers?: [driverId, ...] }               optional: the driver selected for each mode (ids of sim/drivers.js:
+//                                               r<body> x<body> y<body> s<supportId> a<bodyA>:<bodyB>), absent = default
 //
 // Wire format: one prefix character + base64url text.
 //   "b" + base64url(bytes)                        plain
@@ -73,6 +76,13 @@ const SUP_LOCKED = 8;
 const SUP_CLAMPED = 16;
 const SUP_NO_BEAM = 32;
 const MAX_ANGLE_DEG = 360000; // a roller angle is a free number; this only keeps it sane
+// Optional extension section after the supports: `u extFlags`, then the payload of each flag set, in bit order. It is
+// written only when a flag is needed, so links without it are byte-identical to those of earlier versions. Unknown flag
+// bits are an error: a newer link must not be half-understood.
+const EXT_DRIVERS = 1;
+const EXT_KNOWN = EXT_DRIVERS;
+// Driver kind codes in the driver list; an `a` (relative angle) carries a second body index.
+const DRIVER_CODES = ['r', 'x', 'y', 's', 'a'];
 
 // --------------------------------------------------------------------- byte coding
 
@@ -140,11 +150,29 @@ function chooseUnit(values) {
   return k < 0 ? UNITS.length - 1 : k;
 }
 
+/** Driver ids -> [{ code, index, other? }] with support ids replaced by their index in scene.supports. */
+function driverEntries(ids, scene) {
+  return ids.map((id) => {
+    const m = /^([rxy])(\d+)$/.exec(id) || /^(s)(\d+)$/.exec(id) || /^(a)(\d+):(\d+)$/.exec(id);
+    if (!m) fail(`cannot store driver '${String(id)}' in a link`);
+    const code = DRIVER_CODES.indexOf(m[1]);
+    let index = Number(m[2]);
+    if (m[1] === 's') {
+      index = scene.supports.findIndex((sup) => sup.id === index);
+      if (index < 0) fail(`driver '${id}' refers to a missing support`);
+    } else if (index >= scene.bodies.length) fail(`driver '${id}' refers to a missing body`);
+    return { code, index, other: m[1] === 'a' ? Number(m[3]) : undefined };
+  });
+}
+
 /**
  * Setup -> bytes. Layout (u = varint, i = zigzag varint):
  *   u version, byte present|unit, [u flagMask] [i scale*100] [u mode] [u n, n * u pickedSupportIndex] [u n, ceil(n/8) lock-bit bytes]
  *   u bodyCount, per body: u (pointCount * 2 + explicitSegs), pointCount * (i dx, i dy), [u segCount, segCount * (u a, u b)]
  *   u supportCount, per support: byte header, (u nodeIndex | i dx, i dy), [roller: u angleCode]
+ *   [u extFlags (never 0), flag 1: u n, n * (u kindCode, u index [, u secondBodyIndex for kind 4])]
+ * The driver list is the extension: kind codes 0..4 = r x y s a, `index` = body number, or for s the index of the
+ * support in the support list above (so it survives the renumbering of support ids); n <= LIMITS.modes.
  * Points and free support positions are deltas from the previously written position, in units of 1/UNITS[unit].
  * Segments are omitted when they are the plain chain through the points. A support on a body node
  * stores the node's index (over all bodies' points in order) instead of coordinates. A roller's angle
@@ -225,6 +253,16 @@ export function packSetup(setup) {
       w.uint(zigzag(whole ? milli / 1000 : milli) * 2 + (whole ? 0 : 1));
     }
   });
+  const drivers = setup.drivers && setup.drivers.length ? driverEntries(setup.drivers, scene) : null;
+  if (drivers) {
+    w.uint(EXT_DRIVERS);
+    w.uint(drivers.length);
+    for (const d of drivers) {
+      w.uint(d.code);
+      w.uint(d.index);
+      if (d.other !== undefined) w.uint(d.other);
+    }
+  }
   return Uint8Array.from(w.bytes);
 }
 
@@ -327,7 +365,28 @@ export function unpackSetup(bytes) {
       showBeam: !(head & SUP_NO_BEAM),
     });
   }
-  if (!r.done) fail('link data has unexpected trailing bytes');
+  // Optional extension (see packSetup). Indices are only bounded here, not matched to the scene: a driver that does
+  // not exist comes out as an id the simulation does not know and is ignored there with a warning.
+  let drivers = null;
+  if (!r.done) {
+    const ext = r.uint(2 ** 32, 'extension flags');
+    if (ext === 0) fail('link data has unexpected trailing bytes');
+    if (ext >= 256 || ext & ~EXT_KNOWN) fail(`link uses an unknown extension (flags ${ext})`);
+    if (ext & EXT_DRIVERS) {
+      const n = r.uint(LIMITS.modes, 'driver count');
+      if (!n) fail('driver list is empty');
+      drivers = [];
+      for (let i = 0; i < n; i++) {
+        const code = r.uint(DRIVER_CODES.length - 1, 'driver kind');
+        const index = r.uint(LIMITS.supports, 'driver index');
+        const kind = DRIVER_CODES[code];
+        if (kind === 's') drivers.push(`s${bodyCount + index + 1}`);
+        else if (kind === 'a') drivers.push(`a${index}:${r.uint(LIMITS.supports, 'driver body index')}`);
+        else drivers.push(`${kind}${index}`);
+      }
+    }
+    if (!r.done) fail('link data has unexpected trailing bytes');
+  }
 
   const picks = [];
   for (const index of pickIndexes) {
@@ -341,6 +400,7 @@ export function unpackSetup(bytes) {
     mode,
     picks,
     locked,
+    ...(drivers ? { drivers } : {}),
   };
 }
 
@@ -423,62 +483,7 @@ export async function decodeSetup(text) {
   return unpackSetup(bytes);
 }
 
-// ------------------------------------------------------------------- URL options
-
-/**
- * Option text may reach the page HTML-escaped ("&amp;") or percent-escaped ("%26") when an iframe snippet was
- * pasted into a context that does not decode it; neither character sequence can occur in a base64url setup or
- * in a plain option value, so both are read as the "&" separator. Without this, "#s=...&amp;embed=1" silently
- * lost its embed flag and showed the full editor.
- */
-const normalizeOptionText = (text) => String(text).replace(/&amp;|%26/gi, '&');
-
-/**
- * URLSearchParams with option keys lower-cased ("EMBED=1" is "embed=1"). Values are untouched: the `s` setup
- * payload is case-sensitive base64url, and a key that only differs from `s` by case is left alone rather than
- * being turned into the payload key.
- */
-function parseOptions(text) {
-  const params = new URLSearchParams();
-  for (const [k, v] of new URLSearchParams(normalizeOptionText(text))) {
-    const lower = k.toLowerCase();
-    params.append(lower === 's' ? k : lower, v);
-  }
-  return params;
-}
-
-/** Parses "#a=1&b=2" / "#?a=1" into URLSearchParams (keys lower-cased, see parseOptions). */
-export const parseHash = (hash) => parseOptions(String(hash).replace(/^#\??/, ''));
-
-/** Query string options overlaid with hash options (hash wins). Same parsing for both, any key order. */
-export function readParams(search, hash) {
-  const params = parseOptions(String(search).replace(/^\?/, ''));
-  for (const [k, v] of parseHash(hash)) params.set(k, v);
-  return params;
-}
-
-const OPTION_TRUE = new Set(['', '1', 'true', 'yes', 'on']);
-const OPTION_FALSE = new Set(['0', 'false', 'no', 'off']);
-
-/**
- * Boolean URL option: true for a present key with no value ("#embed", "?embed", "embed=") or "1/true/yes/on"
- * (case-insensitive), false for "0/false/no/off", undefined when the key is absent or the value is unrecognised.
- */
-export function optionFlag(params, key) {
-  if (!params.has(key)) return undefined;
-  const value = params.get(key).trim().toLowerCase();
-  if (OPTION_TRUE.has(value)) return true;
-  if (OPTION_FALSE.has(value)) return false;
-  return undefined;
-}
-
-/**
- * Presentation mode from the URL options: the read-only viewer (embed or view on) unless edit on keeps the
- * editor. The inline script in index.html repeats this rule to hide the editing UI before any module runs;
- * tests/serialize.test.js keeps the two in agreement.
- */
-export const isViewer = (params) =>
-  (optionFlag(params, 'embed') === true || optionFlag(params, 'view') === true) && optionFlag(params, 'edit') !== true;
+// ------------------------------------------------------------------- URL hash
 
 /**
  * Hash text (without "#") for the given hash options with the encoded setup stored under `s`.

@@ -1,3 +1,4 @@
+// @ts-check
 // Scene model (pure data + helpers, no DOM).
 //
 // Bodies are rigid and stored in their reference configuration:
@@ -174,6 +175,18 @@ function lFrameOnPinAndRoller() {
   return s;
 }
 
+/** Slider-crank: crank (length 2) on a pin, coupler to a roller on a horizontal rail: 1 degree of freedom. */
+function sliderCrank() {
+  const s = createScene();
+  const x = 4.5;
+  addRod(s, { x: 0, y: 0 }, { x: 0, y: 2 });
+  addRod(s, { x: 0, y: 2 }, { x, y: 0 });
+  addSupport(s, 'pin', { x: 0, y: 0 });
+  addSupport(s, 'joint', { x: 0, y: 2 });
+  addSupport(s, 'roller', { x, y: 0 }, { angleDeg: 0 });
+  return s;
+}
+
 /** Three bars pin - hinge - hinge - roller (horizontal): 2 degrees of freedom. */
 function threeBarChain() {
   const s = createScene();
@@ -190,6 +203,7 @@ function threeBarChain() {
 export const EXAMPLES = {
   mechanism: { label: 'Two-bar mechanism (1 DOF)', build: twoBarMechanism },
   chain: { label: 'Three-bar chain (2 DOF)', build: threeBarChain },
+  slidercrank: { label: 'Slider-crank (1 DOF)', build: sliderCrank },
   arch: { label: 'Three-hinged arch (rigid)', build: threeHingedArch },
   frame: { label: 'L-shaped frame on pin + roller (rigid)', build: lFrameOnPinAndRoller },
 };

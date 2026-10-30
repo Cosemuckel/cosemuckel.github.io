@@ -1,3 +1,4 @@
+// @ts-check
 // Relative poles and Kennedy's three-pole theorem (pure maths, no DOM).
 //
 // Bodies are numbered 1..n in scene order; the ground is body 0. The relative pole (i, j) is the
@@ -51,43 +52,48 @@ function lineThrough(a, b) {
  * Poles that cannot be determined (fewer than two independent lines) are absent.
  */
 export function derivePoles(items, bodyCount) {
+  const size = bodyCount + 1; // bodies 1..n, ground 0
+  // Poles and beams are looked up by the integer slot of the (sorted) body pair; the string key only labels a pole.
+  const slot = (i, j) => (i < j ? i * size + j : j * size + i);
+  const grid = new Array(size * size).fill(null);
+  const beams = new Map(); // slot -> beam lines
   const poles = new Map();
-  const beams = new Map(); // key -> beam lines
+  const add = (pole) => {
+    grid[slot(...pole.pair)] = pole;
+    poles.set(pole.key, pole);
+  };
   for (const it of items) {
     if (it.kind === 'line') {
       const [i, j] = it.pairs[0];
-      const key = poleKey(i, j);
-      if (!beams.has(key)) beams.set(key, []);
-      beams.get(key).push({ p: it.point, d: it.dir, source: { type: 'beam', id: it.id } });
+      const at = slot(i, j);
+      if (!beams.has(at)) beams.set(at, []);
+      beams.get(at).push({ p: it.point, d: it.dir, source: { type: 'beam', id: it.id } });
     } else {
       for (const [i, j] of it.pairs) {
-        const key = poleKey(i, j);
-        if (!poles.has(key)) poles.set(key, { key, pair: [i, j], kind: 'point', point: it.point, origin: 'support', supportId: it.id });
+        if (!grid[slot(i, j)]) add({ key: poleKey(i, j), pair: [i, j], kind: 'point', point: it.point, origin: 'support', supportId: it.id });
       }
     }
   }
 
-  const bodies = Array.from({ length: bodyCount + 1 }, (_, k) => k); // 0 = ground
   let changed = true;
   while (changed) {
     changed = false;
-    for (const i of bodies) {
-      for (const j of bodies) {
-        if (j <= i) continue;
-        const key = poleKey(i, j);
-        if (poles.has(key)) continue;
-        const lines = [...(beams.get(key) || [])];
-        for (const m of bodies) {
+    for (let i = 0; i < size; i++) {
+      for (let j = i + 1; j < size; j++) {
+        if (grid[slot(i, j)]) continue;
+        const beam = beams.get(slot(i, j));
+        const lines = beam ? [...beam] : [];
+        for (let m = 0; m < size; m++) {
           if (m === i || m === j) continue;
-          const keyA = poleKey(i, m);
-          const keyB = poleKey(j, m);
-          if (!poles.has(keyA) || !poles.has(keyB)) continue;
-          const line = lineThrough(poles.get(keyA), poles.get(keyB));
-          if (line) lines.push({ ...line, source: { type: 'kennedy', through: [keyA, keyB], body: m } });
+          const partnerA = grid[slot(i, m)];
+          const partnerB = grid[slot(j, m)];
+          if (!partnerA || !partnerB) continue;
+          const line = lineThrough(partnerA, partnerB);
+          if (line) lines.push({ ...line, source: { type: 'kennedy', through: [partnerA.key, partnerB.key], body: m } });
         }
         const found = intersectFirstPair(lines);
         if (!found) continue;
-        poles.set(key, { key, pair: [i, j], origin: 'derived', ...found });
+        add({ key: poleKey(i, j), pair: [i, j], origin: 'derived', ...found });
         changed = true;
       }
     }

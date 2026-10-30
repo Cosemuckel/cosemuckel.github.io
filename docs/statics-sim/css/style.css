@@ -57,7 +57,7 @@ button.on { background: #d9822b; color: #fff; border-color: #d9822b; }
 #poles-list ul { margin: 4px 0; padding-left: 18px; }
 
 body.panel-hidden #panel { display: none; }
-/* .embed / .viewer sit on <html> (early script in index.html) and on <body> (js/ui.js). */
+/* .embed / .viewer sit on <html> (early script in index.html) and on <body> (js/app/ui.js). */
 .embed #topbar { display: none; }
 body.no-toolbar #toolbar { display: none; }
 
@@ -78,6 +78,7 @@ button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px s
 #modes .mode.current { background: #eef3f9; }
 #modes .mode-head { display: flex; align-items: center; gap: 10px; }
 #modes .mode-head .chk { margin: 0; }
+#modes .mode-title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 
 /* Viewer mode (embed=1 / view=1): read-only, only the sidebar and two view buttons remain. */
 #viewer-bar { display: none; position: absolute; right: 8px; top: 6px; gap: 4px; }
@@ -86,6 +87,10 @@ body.viewer #viewer-bar { display: flex; }
 body.viewer.view-fixed #view { touch-action: auto; }
 #motion-box { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
 #motion-box #sim-t-box { flex: 1 1 100%; }
+#dead-box, #driver-box { margin: 0; }
+#motion-box #dead-box, #motion-box #driver-box { flex: 1 1 100%; }
+#driver-box select, #modes .mode-driver { min-width: 0; max-width: 100%; flex: 1; }
+#modes .mode-driver-box { margin: 2px 0; }
 #motion-box #sim-t-box input[type="range"] { flex: 1; width: auto; min-width: 80px; }
 #poles-list .picks { display: flex; flex-wrap: wrap; gap: 0 14px; }
 

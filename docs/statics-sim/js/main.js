@@ -1,5 +1,7 @@
-import { startApp } from './ui.js';
-import { readParams, decodeSetup } from './serialize.js';
+import { startApp } from './app/ui.js';
+import { decodeSetup } from './io/serialize.js';
+import { reportError } from './app/errors.js';
+import { readParams } from './io/options.js';
 
 /**
  * Options come from the query string and/or the URL hash (e.g. "#embed=1&example=arch"),
@@ -11,7 +13,7 @@ import { readParams, decodeSetup } from './serialize.js';
  *   zoom=0           viewer only: freeze the view (no wheel zoom, no panning)
  *   toolbar=0        hide the toolbar (editor only)
  *   panel=0|1        force the side panel closed / open (default: open when the window is wider than 720 px)
- *   example=NAME     mechanism (default) | chain | arch | frame
+ *   example=NAME     mechanism (default) | chain | slidercrank | arch | frame
  *   displaced=1      start with the displaced-shape overlay on
  */
 const params = readParams(window.location.search, window.location.hash);
@@ -24,7 +26,7 @@ if (params.has('s')) {
   try {
     initial.setup = await decodeSetup(params.get('s'));
   } catch (err) {
-    console.warn('Could not read the setup in the URL:', err);
+    reportError('Could not read the setup in the URL', err);
     initial.error = err;
   }
 }
